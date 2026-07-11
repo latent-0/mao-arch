@@ -1,0 +1,6 @@
+.env
+docs/architecture.md
+__pycache__/
+*.pyc
+artifacts/
+.venv/

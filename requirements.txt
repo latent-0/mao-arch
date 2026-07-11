@@ -1,0 +1,5 @@
+torch>=2.4
+numpy>=1.26
+# Optional cloud backends (system falls back to local encoders when absent)
+google-genai>=1.0
+# Optional: local adjudicator explanations via Ollama HTTP API (stdlib urllib used, no package needed)
