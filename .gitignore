@@ -1,4 +1,5 @@
 .env
+.claude/
 docs/architecture.md
 __pycache__/
 *.pyc
