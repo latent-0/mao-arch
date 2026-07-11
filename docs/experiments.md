@@ -148,8 +148,10 @@ out-of-distribution transfer. One contrastive state is sampled per instance
 (n = 300), with fixed seeds.
 
 ```
-python -m mao.train --encoder local          # synthetic training only
-python -m mao.eval_swebench --encoder local   # zero-shot on 300 real issues
+python -m mao.train --encoder local            # synthetic training only (offline)
+python -m mao.eval_swebench --encoder local     # zero-shot on 300 real issues
+python -m mao.train --encoder gemini           # semantic traces (needs GEMINI_API_KEY)
+python -m mao.eval_swebench --encoder gemini    # zero-shot, semantic trace embeddings
 ```
 
 ### 6.4 Results (n=300, seed 99)
@@ -157,14 +159,17 @@ python -m mao.eval_swebench --encoder local   # zero-shot on 300 real issues
 | Substrate | Handoff rate | Gate P / R / F1 | Deferral | Latency (median) |
 |---|---|---|---|---|
 | naive text handoff | 49.0% (147/300) | — | — | — |
-| joint-embedding (local) | **96.3%** (289/300) | 1.000 / 0.500 / 0.667 | 19.3% | 0.4 ms |
+| joint-embedding (local, offline) | 96.3% (289/300) | 1.000 / 0.500 / 0.667 | 19.3% | 0.4 ms |
+| joint-embedding (gemini) | **99.3%** (298/300) | 1.000 / **0.913** / **0.955** | 47.0% | 164 ms |
 
 Naive baseline MAST tally: 153/300 "Disobey Task Specification" (dependency-order) failures.
 
-Stability across seeds {99, 7, 123}: naive 44.7–49.0%, joint-embedding
-94.0–96.3%, **precision 1.000 in every run**, recall 0.437–0.500, deferral
-15.0–19.3%. A larger draw (3 states per instance, n=900, seed 99) gives
-naive 46.9%, joint-embedding 96.2%, precision 1.000, recall 0.482, deferral 20.3%.
+Stability across seeds {99, 7, 123}. Local: naive 44.7–49.0%, joint-embedding
+94.0–96.3%, recall 0.437–0.500, deferral 15.0–19.3%. Gemini: joint-embedding
+99.0–99.7%, recall 0.870–0.913, deferral 42.7–47.0%. **Precision is 1.000 in
+every run of both modes.** A larger local draw (3 states per instance, n=900,
+seed 99) gives naive 46.9%, joint-embedding 96.2%, precision 1.000, recall
+0.482, deferral 20.3%.
 
 ### 6.5 Interpretation
 
@@ -175,16 +180,25 @@ naive 46.9%, joint-embedding 96.2%, precision 1.000, recall 0.482, deferral 20.3
 2. **The architectural invariant holds on real data.** Precision is 1.000 in
    every seed: witness-routing (a replan requires a named violated edge from
    the graph snapshot, else defer) is not a synthetic-data artifact.
-3. **Recall drops to ~0.50, exactly as §5 predicted.** The local hashing
-   encoder has no semantic transfer to real repo/file vocabulary, so it misses
-   about half the violations it should catch — the same lexical ceiling the
-   leave-one-template-out study identified. §5 showed Gemini trace embeddings
-   recover most of this gap in-family; applying that here needs an embeddings
-   key (absent in this run), and semantic node features (EmbeddingGemma) remain
-   the identified fix. This is reported unpolished.
-4. **Fails loud under shift.** Human-deferral rises from 6.0% in-distribution
-   (§4) to ~19% here — the ambiguous band absorbing uncertainty rather than
-   silently approving, the designed behavior.
+3. **Local recall drops to ~0.50, exactly as §5 predicted — and semantic
+   embeddings recover it on the real benchmark too.** The local hashing encoder
+   has no semantic transfer to real repo/file vocabulary, so it misses about
+   half the violations it should catch. Swapping in Gemini trace embeddings
+   (`--encoder gemini`, same synthetic-only training) lifts recall from ~0.50 to
+   **0.87–0.91** and F1 from 0.667 to **0.955** on the 300 real issues — the §5
+   in-family result now confirmed under a genuine external distribution shift.
+   Semantic *node* features (EmbeddingGemma) to keep the graph side fully local
+   remain the identified next step.
+4. **The recall gain is not free — it trades against deferral.** Gemini mode
+   escalates far more (≈47% vs 19% local): on OOD graphs the semantic alignment
+   scores sit lower relative to the gemini-calibrated band, so more handoffs
+   land in the flag-to-human zone. The near-perfect 99.3% handoff rate is
+   therefore substantially human-in-the-loop, not autonomous approval — stated
+   plainly, not spun. It also adds a ~164 ms embedding round-trip; the cosine
+   gate itself stays <1 ms.
+5. **Fails loud under shift.** Human-deferral rises from 6.0% in-distribution
+   (§4) to ~19% (local) / ~47% (gemini) here — the ambiguous band absorbing
+   uncertainty rather than silently approving, the designed behavior.
 
 ## 7. Engineering findings (failures that changed the system)
 

@@ -58,9 +58,10 @@ The same adjudicator — trained *only* on the 5 synthetic templates — evaluat
 | Substrate | Handoff rate | Gate P / R / F1 | Deferral |
 |---|---|---|---|
 | naive text handoff | 49.0% (147/300) | — | — |
-| joint-embedding (local, offline) | **96.3%** (289/300) | 1.000 / 0.500 / 0.667 | 19.3% |
+| joint-embedding (local, offline) | 96.3% (289/300) | 1.000 / 0.500 / 0.667 | 19.3% |
+| joint-embedding (gemini) | **99.3%** (298/300) | 1.000 / **0.913** / **0.955** | 47.0% |
 
-Trained on 5 synthetic templates, the gate nearly doubles the constraint-respecting handoff rate on 300 real, unseen issues (49.0% → 96.3%), and **precision stays 1.000 across every seed** — the witness-routing invariant is not a synthetic-data artifact. Recall drops to ~0.50 because the offline hashing encoder cannot transfer to real repo/file vocabulary: exactly the lexical ceiling the leave-one-template-out study above identifies, now confirmed on a real benchmark (semantic trace embeddings recover most of it in-family; semantic node features are the identified fix). Deferral rises from 6% in-distribution to ~19% here — the system escalates under distribution shift rather than silently approving. What is real vs. derived in this adaptation is stated plainly in [docs/experiments.md §6](docs/experiments.md).
+Trained on 5 synthetic templates, the gate lifts the constraint-respecting handoff rate on 300 real, unseen issues from 49.0% to 96.3% (local) / 99.3% (gemini), and **precision stays 1.000 across every seed of both modes** — the witness-routing invariant is not a synthetic-data artifact. The offline hashing encoder's recall is only ~0.50 because it cannot transfer to real repo/file vocabulary — exactly the lexical ceiling the leave-one-template-out study above identifies. Swapping in Gemini trace embeddings (same synthetic-only training) recovers it on the real benchmark: recall 0.50 → 0.91, F1 0.667 → 0.955. That gain is not free — gemini mode escalates far more (47% vs 19% deferral), so its near-perfect handoff rate is substantially human-in-the-loop. Deferral rises with distribution shift in both modes: the system escalates rather than silently approving. What is real vs. derived in this adaptation is stated plainly in [docs/experiments.md §6](docs/experiments.md).
 
 ## Layout
 
