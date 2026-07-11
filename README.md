@@ -10,8 +10,11 @@ Multi-agent handoff today is a prose summary: a lossy projection of a structured
 pip install -r requirements.txt
 python -m mao.train            # ~70s on CPU: datagen -> contrastive training -> tau calibration
 python -m mao.eval             # constraint-respecting handoff rate, naive vs joint-embedding
-python -m demo.swe_scenario    # the branch-before-QA live demo (add --fast to skip pauses)
+python -m demo.swe_scenario    # the branch-before-QA terminal demo (add --fast to skip pauses)
+python -m demo.web.server      # split-screen web demo at http://127.0.0.1:8765
 ```
+
+The web demo runs both pipelines live on every click — real graph encoding, real cosine gate, real Gemma 4 replan messages — and animates them side by side: naive prose handoff failing on the left, the joint-embedding handoff getting gated, re-planned, and passing on the right. A "kill network" toggle demonstrates the fully on-device path. Self-contained page, no external assets — it survives offline.
 
 No API key or local model is required to run it: the language encoder falls back to a deterministic local featurizer, and the adjudicator's *decision* is pure vector math. With `GEMINI_API_KEY` set (in `.env`), trace embedding uses the Gemini embeddings API; with **Gemma 4 E2B** pulled in Ollama (`ollama pull gemma4:e2b`), the adjudicator's replan messages are written by local Gemma 4.
 
@@ -60,6 +63,7 @@ mao/handoff.py             handoff packet {graph frontier, embedding} + naive pr
 mao/adjudicator.py         local gate: approve / flag-to-human / request-replan (+ Gemma 4 via Ollama)
 mao/eval.py                constraint-respecting handoff rate + gate P/R/F1 + MAST tally
 demo/swe_scenario.py       branch-before-QA demo: naive fail -> gated replan -> offline beat
+demo/web/                  split-screen live web demo (stdlib server + self-contained page)
 ```
 
 ## The demo in one breath

@@ -80,12 +80,12 @@ class OllamaGemma:
         if not self.model:
             return None
         try:
-            # Gemma 4 is a thinking model: use the chat endpoint, leave head-
-            # room for reasoning tokens, and read message.content (the answer,
-            # not the thinking). keep_alive keeps the model warm for the demo.
-            body = json.dumps({"model": self.model, "stream": False,
+            # Gemma 4 is a thinking model: thinking is disabled here for
+            # latency (the gate decision never depends on this call), and
+            # keep_alive keeps the model warm between adjudications.
+            body = json.dumps({"model": self.model, "stream": False, "think": False,
                                "messages": [{"role": "user", "content": prompt}],
-                               "options": {"temperature": 0.2, "num_predict": 512},
+                               "options": {"temperature": 0.2, "num_predict": 180},
                                "keep_alive": "30m"}).encode()
             req = urllib.request.Request(f"{self.host}/api/chat", data=body,
                                          headers={"Content-Type": "application/json"})

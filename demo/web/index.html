@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joint-Embedding Handoff — live demo</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#11151f; --card:#171c29; --line:#232a3a;
+    --text:#e8ecf4; --dim:#8b94a7; --red:#ff5d6c; --green:#3ddc84;
+    --amber:#ffc857; --blue:#6ea8ff; --purple:#b58cff;
+    --mono:ui-monospace,'Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.45 system-ui,'Segoe UI',sans-serif;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:16px;padding:14px 22px;border-bottom:1px solid var(--line)}
+  header h1{font-size:17px;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--dim);font-size:12.5px}
+  .chips{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .chip{font:600 11px/1 var(--mono);padding:6px 10px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .chip.g{color:var(--green);border-color:rgba(61,220,132,.35)}
+  .chip.b{color:var(--blue);border-color:rgba(110,168,255,.35)}
+  .controls{display:flex;gap:10px;align-items:center;padding:12px 22px}
+  button{font:600 14px system-ui;padding:10px 22px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;transition:.15s}
+  button.primary{background:var(--green);border-color:var(--green);color:#04120a}
+  button.primary:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.45;cursor:default}
+  label.tog{display:flex;gap:7px;align-items:center;color:var(--dim);font-size:13px;cursor:pointer;user-select:none}
+  .status{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
+  main{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:0 22px 22px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+  .panel-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .panel-head .dot{width:9px;height:9px;border-radius:50%}
+  .panel-head h2{font-size:14.5px;font-weight:650}
+  .panel-head .tag{margin-left:auto;font:600 10.5px var(--mono);padding:4px 9px;border-radius:6px}
+  .left .dot{background:var(--red)} .right .dot{background:var(--green)}
+  .left .tag{background:rgba(255,93,108,.12);color:var(--red)}
+  .right .tag{background:rgba(61,220,132,.12);color:var(--green)}
+  .feed{flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:9px;overflow-y:auto;min-height:0}
+  .card{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--line);border-radius:9px;padding:9px 12px;opacity:0;transform:translateY(7px);transition:opacity .3s,transform .3s}
+  .card.show{opacity:1;transform:none}
+  .card .t{font-weight:620;font-size:13.5px;display:flex;gap:8px;align-items:center}
+  .card .d{color:var(--dim);font-size:12.3px;margin-top:3px;font-family:var(--mono);white-space:pre-wrap}
+  .card .badge{font:700 9.5px var(--mono);padding:3px 7px;border-radius:5px;letter-spacing:.5px}
+  .card.k-handoff{border-left-color:var(--blue)} .card.k-handoff .badge{background:rgba(110,168,255,.14);color:var(--blue)}
+  .card.k-verdict{border-left-color:var(--amber)} .card.k-verdict .badge{background:rgba(255,200,87,.14);color:var(--amber)}
+  .card.k-witness{border-left-color:var(--red)}
+  .card.k-gemma{border-left-color:var(--purple)} .card.k-gemma .badge{background:rgba(181,140,255,.14);color:var(--purple)}
+  .card.k-info{border-left-color:var(--amber)}
+  .card.ok-true{border-left-color:var(--green)} .card.ok-false{border-left-color:var(--red)}
+  .card .mark{font-family:var(--mono);font-weight:800}
+  .ok-true .mark{color:var(--green)} .ok-false .mark{color:var(--red)}
+  .card.k-result{padding:13px 14px;text-align:center}
+  .card.k-result .t{justify-content:center;font-size:16px;letter-spacing:.6px;font-weight:800}
+  .card.k-result.ok-true{background:rgba(61,220,132,.10)} .card.k-result.ok-false{background:rgba(255,93,108,.10)}
+  footer{display:flex;gap:20px;justify-content:center;padding:10px;border-top:1px solid var(--line);color:var(--dim);font:12px var(--mono)}
+  footer b{color:var(--text)}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Joint-Embedding Handoff</h1>
+    <div class="sub">same agents, same intent — only the handoff substrate differs</div>
+  </div>
+  <div class="chips">
+    <span class="chip b">naive baseline 48.7%</span>
+    <span class="chip g">joint-embedding 99.7%</span>
+    <span class="chip" id="modeChip">gate: on-device</span>
+  </div>
+</header>
+
+<div class="controls">
+  <button class="primary" id="runBtn" onclick="run()">&#9654;&nbsp; Run both pipelines</button>
+  <label class="tog"><input type="checkbox" id="offline"> kill network (gate survives — Gemma 4 is local)</label>
+  <span class="status" id="status"></span>
+</div>
+
+<main>
+  <section class="panel left">
+    <div class="panel-head"><span class="dot"></span><h2>Naive text handoff</h2><span class="tag">STATUS QUO</span></div>
+    <div class="feed" id="leftFeed"></div>
+  </section>
+  <section class="panel right">
+    <div class="panel-head"><span class="dot"></span><h2>Joint-embedding handoff</h2><span class="tag">THIS PROJECT</span></div>
+    <div class="feed" id="rightFeed"></div>
+  </section>
+</main>
+
+<footer>
+  <span>gate: <b>&lt;1 ms</b> cosine check, constant in orchestration length</span>
+  <span>replan precision <b>1.000</b> (structural witness required)</span>
+  <span>adjudicator: <b>Gemma 4 E2B</b>, fully on-device</span>
+</footer>
+
+<script>
+const MARKS = {agent:'&#9679;', handoff:'&#8674;', execute:'', verdict:'&#9888;', witness:'&#10007;', gemma:'&#9670;', info:'&#9679;', result:''};
+
+function card(e){
+  const c = document.createElement('div');
+  c.className = 'card k-' + e.kind + (e.ok === null ? '' : ' ok-' + e.ok);
+  let mark = '';
+  if (e.kind === 'execute') mark = `<span class="mark">${e.ok ? '&#10003;' : '&#10007;'}</span>`;
+  const badge = e.badge ? `<span class="badge">${e.badge}</span>` : '';
+  c.innerHTML = `<div class="t">${mark}${e.title}${badge}</div>` +
+                (e.detail ? `<div class="d">${e.detail}</div>` : '');
+  return c;
+}
+
+function animate(feed, events, stepMs){
+  return new Promise(resolve => {
+    let i = 0;
+    (function next(){
+      if (i >= events.length) return resolve();
+      const c = card(events[i++]);
+      feed.appendChild(c);
+      requestAnimationFrame(() => requestAnimationFrame(() => c.classList.add('show')));
+      feed.scrollTop = feed.scrollHeight;
+      setTimeout(next, stepMs);
+    })();
+  });
+}
+
+async function run(){
+  const btn = document.getElementById('runBtn'), st = document.getElementById('status');
+  const offline = document.getElementById('offline').checked;
+  const leftFeed = document.getElementById('leftFeed');
+  const rightFeed = document.getElementById('rightFeed');
+  btn.disabled = true;
+  leftFeed.innerHTML = '';
+  rightFeed.innerHTML = '';
+  st.textContent = 'live: encoding graph frontier, gating with Gemma 4 on-device…';
+
+  // placeholder while the structured side runs for real (embeddings + Gemma)
+  const wait = card({kind:'info', title:'Adjudicating live…',
+    detail:'r-GAT frontier encoding + cosine gate + Gemma 4 E2B replan message', ok:null, badge:'LIVE'});
+  rightFeed.appendChild(wait);
+  requestAnimationFrame(() => wait.classList.add('show'));
+
+  try {
+    const leftReq = fetch('/api/run?side=left').then(r => r.json());
+    const rightReq = fetch('/api/run?side=right&offline=' + (offline ? 1 : 0)).then(r => r.json());
+
+    const leftAnim = leftReq.then(d => animate(leftFeed, d.left, 1500));
+    const rightAnim = rightReq.then(d => {
+      document.getElementById('modeChip').textContent =
+        'gate: ' + (d.mode === 'local' ? 'fully on-device' : 'gemini embeddings');
+      wait.remove();
+      return animate(rightFeed, d.right, 1500);
+    });
+    await Promise.all([leftAnim, rightAnim]);
+    st.textContent = 'done — left: dependency-order failure · right: gated, re-planned, green';
+  } catch (err) {
+    st.textContent = 'error: ' + err;
+  }
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>
