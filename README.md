@@ -10,6 +10,7 @@ Multi-agent handoff today is a prose summary. That summary is a lossy projection
 pip install -r requirements.txt
 python -m mao.train            # about 70s on CPU: datagen, contrastive training, tau calibration
 python -m mao.eval             # constraint-respecting handoff rate, naive vs joint-embedding
+python -m mao.eval_swebench    # zero-shot on 300 real SWE-bench Lite issues (no training on them)
 python -m demo.swe_scenario    # branch-before-QA terminal demo (add --fast to skip pauses)
 python -m demo.web.server      # live split-screen web demo at http://127.0.0.1:8765
 ```
@@ -50,6 +51,17 @@ Precision stays at 1.000 in every split of both sweeps, so the witness-routing r
 
 Both substrates receive the same receiving-agent proposal policy, so the difference under test is the handoff, not agent intelligence. Full protocols, hyperparameters, and the engineering findings behind these numbers are in [docs/experiments.md](docs/experiments.md).
 
+### Real-benchmark evaluation: SWE-bench Lite (zero-shot, n=300)
+
+The same adjudicator — trained *only* on the 5 synthetic templates — evaluated on the 300 real GitHub issues of [SWE-bench Lite](https://www.swebench.com/) across 12 open-source projects (django, sympy, scikit-learn, matplotlib, …), which it never saw in training. SWE-bench's own evaluation protocol defines the dependency order the gate protects: the `FAIL_TO_PASS` tests cannot pass until the code edit is applied. Each real instance is turned into a task graph from its real repo and gold-edited file (adapter: [mao/benchmarks/swebench.py](mao/benchmarks/swebench.py)); the real repo/file paths are out-of-distribution vocabulary.
+
+| Substrate | Handoff rate | Gate P / R / F1 | Deferral |
+|---|---|---|---|
+| naive text handoff | 49.0% (147/300) | — | — |
+| joint-embedding (local, offline) | **96.3%** (289/300) | 1.000 / 0.500 / 0.667 | 19.3% |
+
+Trained on 5 synthetic templates, the gate nearly doubles the constraint-respecting handoff rate on 300 real, unseen issues (49.0% → 96.3%), and **precision stays 1.000 across every seed** — the witness-routing invariant is not a synthetic-data artifact. Recall drops to ~0.50 because the offline hashing encoder cannot transfer to real repo/file vocabulary: exactly the lexical ceiling the leave-one-template-out study above identifies, now confirmed on a real benchmark (semantic trace embeddings recover most of it in-family; semantic node features are the identified fix). Deferral rises from 6% in-distribution to ~19% here — the system escalates under distribution shift rather than silently approving. What is real vs. derived in this adaptation is stated plainly in [docs/experiments.md §6](docs/experiments.md).
+
 ## Layout
 
 ```
@@ -62,6 +74,8 @@ mao/train.py               training + tau* calibration (F1 sweep) -> artifacts/ 
 mao/handoff.py             handoff packet {graph frontier, embedding} + naive prose baseline
 mao/adjudicator.py         local gate: approve / flag-to-human / request-replan (+ Gemma 4 via Ollama)
 mao/eval.py                constraint-respecting handoff rate + gate P/R/F1 + MAST tally
+mao/eval_swebench.py       zero-shot eval on real SWE-bench Lite task graphs
+mao/benchmarks/swebench.py SWE-bench Lite -> TaskGraph adapter (300 real issues, 12 repos)
 demo/swe_scenario.py       branch-before-QA demo: naive fail -> gated replan -> offline beat
 demo/web/                  live split-screen web demo (real agents, real repo, real tests)
 ```

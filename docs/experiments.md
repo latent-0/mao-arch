@@ -45,7 +45,7 @@ The graph's ground-truth checker (`TaskGraph.check_action`) certifies every labe
 - **Joint space**: two MLP projectors (512→256→128 and 128→256→128), outputs L2-normalized.
 - **Loss**: cosine triplet, `max(0, cos(g, t_neg) − cos(g, t_pos) + 0.3)`.
 - **Optimization**: Adam, lr 1e-3, batch 32, 8 epochs, seed 0. ~70 s (local) / ~5 min (gemini, API-bound) on CPU.
-- **Critical detail**: training embeds the graph **frontier** (non-done subtasks + 1-hop neighborhood + constraints), exactly what handoff packets carry at inference. See §6.2 for the bug that motivated this.
+- **Critical detail**: training embeds the graph **frontier** (non-done subtasks + 1-hop neighborhood + constraints), exactly what handoff packets carry at inference. See §7.2 for the bug that motivated this.
 
 ### Threshold calibration
 
@@ -99,30 +99,118 @@ Interpretation, in the order the evidence arrived:
 3. **Residual gap, diagnosed.** Even in gemini mode the GNN's *node features* are hashed text, so unseen step names still degrade the graph embedding. Semantic node features (EmbeddingGemma to keep it local) are the identified next step.
 4. **The architectural invariant held everywhere:** precision 1.000 in all 10 splits.
 
-## 6. Engineering findings (failures that changed the system)
+## 6. Real-benchmark evaluation — SWE-bench Lite (zero-shot transfer)
+
+§4–5 use synthetic graphs. This section evaluates the *same* synthetic-trained
+adjudicator on a real external benchmark it never saw, to test whether the
+handoff gate transfers off the templates.
+
+### 6.1 Why SWE-bench Lite fits this system
+
+SWE-bench Lite (Jiménez et al., 2024) is 300 real GitHub issues from 12
+open-source Python projects (django, sympy, scikit-learn, matplotlib, sphinx,
+pytest, astropy, requests, pylint, xarray, seaborn, flask). Its official
+evaluation harness resolves an instance by applying the code patch, applying
+the test patch, then running the `FAIL_TO_PASS` tests and requiring them to
+pass. That protocol *is* a dependency order — the failing tests cannot pass
+until the code edit is applied — which is exactly the constraint class the
+handoff gate protects. Unlike MAST/GEMMAS (diagnostic frameworks, not scored
+datasets), SWE-bench Lite gives a real, external, fixed instance set.
+
+### 6.2 What is real vs. derived (stated plainly)
+
+Real, loaded from `mao/benchmarks/data/swebench_lite_instances.json` (the full
+Lite instance set, one record per issue):
+
+- the instance set (all 300), the 12 repositories, the PR numbers;
+- the source file the accepted fix edits (the gold-patch file); and
+- the execution precedence (edit-before-test) taken from the harness protocol.
+
+Derived, and disclosed exactly as the synthetic traces are in §8: the
+decomposition into the canonical SWE-agent workflow (`reproduce → localize →
+edit → run_fail_to_pass / run_pass_to_pass → submit`, with a `repo_worktree`
+mutex over localize+edit), and the reasoning traces, which are templated over
+the real repo/file tokens. Per-test names and the issue prose live only in the
+HuggingFace dataset (unreachable from this environment's egress policy) and are
+not used; the test step is at suite granularity. The graph adapter is
+[mao/benchmarks/swebench.py](../mao/benchmarks/swebench.py).
+
+The point is a genuine distribution shift: real repo names and source paths
+(e.g. `astropy/modeling/separable.py`, `django/db/migrations/serializer.py`)
+are vocabulary absent from the 5 synthetic templates the model trained on — the
+same lexical-transfer stress §5 studies, now on real data.
+
+### 6.3 Protocol
+
+Identical metric and receiver policy as §3–4. The adjudicator is loaded from
+artifacts trained **only** on the synthetic templates; every number below is
+out-of-distribution transfer. One contrastive state is sampled per instance
+(n = 300), with fixed seeds.
+
+```
+python -m mao.train --encoder local          # synthetic training only
+python -m mao.eval_swebench --encoder local   # zero-shot on 300 real issues
+```
+
+### 6.4 Results (n=300, seed 99)
+
+| Substrate | Handoff rate | Gate P / R / F1 | Deferral | Latency (median) |
+|---|---|---|---|---|
+| naive text handoff | 49.0% (147/300) | — | — | — |
+| joint-embedding (local) | **96.3%** (289/300) | 1.000 / 0.500 / 0.667 | 19.3% | 0.4 ms |
+
+Naive baseline MAST tally: 153/300 "Disobey Task Specification" (dependency-order) failures.
+
+Stability across seeds {99, 7, 123}: naive 44.7–49.0%, joint-embedding
+94.0–96.3%, **precision 1.000 in every run**, recall 0.437–0.500, deferral
+15.0–19.3%. A larger draw (3 states per instance, n=900, seed 99) gives
+naive 46.9%, joint-embedding 96.2%, precision 1.000, recall 0.482, deferral 20.3%.
+
+### 6.5 Interpretation
+
+1. **The gate transfers.** Trained only on 5 synthetic templates, it nearly
+   doubles the constraint-respecting handoff rate on 300 real GitHub issues it
+   never saw (49.0% → 96.3%). The structural signal — dependency edges,
+   frontier — carries across distributions.
+2. **The architectural invariant holds on real data.** Precision is 1.000 in
+   every seed: witness-routing (a replan requires a named violated edge from
+   the graph snapshot, else defer) is not a synthetic-data artifact.
+3. **Recall drops to ~0.50, exactly as §5 predicted.** The local hashing
+   encoder has no semantic transfer to real repo/file vocabulary, so it misses
+   about half the violations it should catch — the same lexical ceiling the
+   leave-one-template-out study identified. §5 showed Gemini trace embeddings
+   recover most of this gap in-family; applying that here needs an embeddings
+   key (absent in this run), and semantic node features (EmbeddingGemma) remain
+   the identified fix. This is reported unpolished.
+4. **Fails loud under shift.** Human-deferral rises from 6.0% in-distribution
+   (§4) to ~19% here — the ambiguous band absorbing uncertainty rather than
+   silently approving, the designed behavior.
+
+## 7. Engineering findings (failures that changed the system)
 
 These three failures occurred during development, were diagnosed from behavior, and each produced a design change. I consider them results.
 
-### 6.1 Prefix-chain memorization
+### 7.1 Prefix-chain memorization
 
 The first model reached 1.0 validation triplet accuracy and then failed on the demo's branching graph — it had memorized "done steps form a prefix of a chain" (the only pattern in v1 training data) instead of the rule "all of this action's dependencies are done." **Fix:** templates became real DAGs with branches/joins, and done-sets became randomly sampled dependency-closed subsets. The lesson: validation accuracy within a narrow distribution says nothing about having learned the right invariant.
 
-### 6.2 Train/inference representation mismatches
+### 7.2 Train/inference representation mismatches
 
 Two subtler shifts surfaced through demo behavior (alignments decaying as steps executed): (a) training graphs attach an artifact node to every done step, but executed demo steps didn't — mid-execution states looked structurally alien; (b) training embedded full graphs while handoff packets embed the frontier. **Fix:** executed steps now produce artifacts (matching the datagen convention), and training embeds the frontier. Both are now conventions of the protocol, not incidental choices.
 
-### 6.3 Witness-routing
+### 7.3 Witness-routing
 
 The gate occasionally rejected valid actions near the threshold. Rather than tune thresholds to the demo, I changed the protocol: rejection requires a *named structural witness* from the graph snapshot; witness-less suspicion defers to a human. This moved all false replans into deferrals (precision → 1.0 architecturally) and gave the human-deferral boundary a precise definition: *quantitatively ambiguous alignment, or a rejection the adjudicator cannot justify structurally.*
 
-## 7. Known limitations
+## 8. Known limitations
 
-- Synthetic data end-to-end: 5 workflow families, templated trace phrasing. LLM-generated (Gemini-paraphrased) traces are the natural extension; the pipeline supports it.
+- Training is synthetic (5 workflow families, templated trace phrasing); §6 adds a real external benchmark (SWE-bench Lite) for *evaluation*, but the trained model still learns from synthetic graphs. LLM-generated (Gemini-paraphrased) traces are the natural extension; the pipeline supports it.
+- The SWE-bench Lite adaptation (§6) uses real instances, repos and gold-edited files, but derives the workflow decomposition and templates the traces; per-test names and issue prose from the HuggingFace dataset are not used (test steps are at suite granularity). Recall there is bounded by the local encoder's lexical transfer, not by the benchmark.
 - The naive baseline receiver is a parameterized policy (charitable at 40% correct), not a measured LLM receiver; the demo failure pattern, however, mirrors a verbatim documented enterprise-agent trace.
 - The Agent A/B loop in the demo is simulated; wiring the Managed Agents API (`antigravity-preview-05-2026`) is the intended cloud-side completion.
 - A trace that misdescribes the intended action can mislead the gate; the graph snapshot bounds the damage (execution still hits the ground-truth checker in this implementation).
 
-## 8. Compute and models
+## 9. Compute and models
 
 | Component | Model / hardware |
 |---|---|
