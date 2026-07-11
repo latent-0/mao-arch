@@ -18,7 +18,7 @@ import random
 import statistics
 import time
 
-from .adjudicator import Adjudicator, Verdict
+from .adjudicator import Adjudicator, Verdict, artifact_subdir
 from .datagen import generate, _trace
 from .encoders.language import encoder_mode
 from .graph import Status
@@ -51,16 +51,20 @@ def main():
     ap.add_argument("--seed", type=int, default=99)  # disjoint from train/val
     ap.add_argument("--no-llm", action="store_true",
                     help="skip Ollama explanations (decisions unaffected)")
-    ap.add_argument("--encoder", choices=["auto", "local", "gemini"], default="auto")
+    ap.add_argument("--encoder", choices=["auto", "local", "gemini", "embeddinggemma"],
+                    default="auto")
+    ap.add_argument("--node-encoder", choices=["hash", "embeddinggemma", "gemini"],
+                    default="hash", help="graph node-feature encoder to load")
     ap.add_argument("--artifact-mode", default=None,
                     help="artifact subdir to load (e.g. local_holdout2); "
-                         "defaults to --encoder")
+                         "defaults to <encoder>[_snode-<node-encoder>]")
     ap.add_argument("--templates", default=None,
                     help="comma-separated TEMPLATES indices to evaluate on "
                          "(e.g. the held-out one)")
     args = ap.parse_args()
 
-    adj = Adjudicator.from_artifacts(mode=args.artifact_mode or args.encoder,
+    art_mode = args.artifact_mode or artifact_subdir(args.encoder, args.node_encoder)
+    adj = Adjudicator.from_artifacts(mode=art_mode,
                                      use_local_llm=not args.no_llm)
     print(f"[encoder] {type(adj.encoder).__name__} (mode={encoder_mode(adj.encoder)})")
     template_ids = [int(x) for x in args.templates.split(",")] if args.templates else None

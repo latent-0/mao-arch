@@ -188,7 +188,7 @@ seed 99) gives naive 46.9%, joint-embedding 96.2%, precision 1.000, recall
    **0.87–0.91** and F1 from 0.667 to **0.955** on the 300 real issues — the §5
    in-family result now confirmed under a genuine external distribution shift.
    Semantic *node* features (EmbeddingGemma) to keep the graph side fully local
-   remain the identified next step.
+   are the identified next step, now wired and ready to run on device (§6.6).
 4. **The recall gain is not free — it trades against deferral.** Gemini mode
    escalates far more (≈47% vs 19% local): on OOD graphs the semantic alignment
    scores sit lower relative to the gemini-calibrated band, so more handoffs
@@ -199,6 +199,49 @@ seed 99) gives naive 46.9%, joint-embedding 96.2%, precision 1.000, recall
 5. **Fails loud under shift.** Human-deferral rises from 6.0% in-distribution
    (§4) to ~19% (local) / ~47% (gemini) here — the ambiguous band absorbing
    uncertainty rather than silently approving, the designed behavior.
+
+### 6.6 Semantic node features via EmbeddingGemma (wired; local run pending)
+
+§6.5 point 3 isolates the residual cause: even with Gemini *trace* embeddings,
+the r-GAT's *node* features are still lexical hashing (structural.py), so an
+unseen step name like `edit astropy/modeling/separable.py` degrades the graph
+embedding itself — which is what inflates gemini-mode deferral to ~47%. The
+identified fix is semantic node features, kept on-device with EmbeddingGemma.
+
+This is now wired. The node featurizer is pluggable
+([mao/encoders/language.py](../mao/encoders/language.py) `get_node_encoder`;
+[mao/encoders/structural.py](../mao/encoders/structural.py)
+`StructuralEncoder(node_encoder=...)`), threaded through the joint model,
+training, the saved calibration (`node_mode` / `node_dim`), and the
+adjudicator. EmbeddingGemma runs via a local Ollama server
+(`ollama pull embeddinggemma`, `/api/embed`), Matryoshka-truncated to 256-d and
+L2-normalized — fully offline, matching the local-first Gemma track. A Gemini
+node backend is included as a cloud stand-in for the effect where local weights
+are unavailable.
+
+```
+ollama pull embeddinggemma                                   # once, on device
+python -m mao.train --encoder embeddinggemma --node-encoder embeddinggemma
+python -m mao.eval_swebench --encoder embeddinggemma --node-encoder embeddinggemma
+# or trace-local + semantic nodes:
+python -m mao.train --encoder local --node-encoder embeddinggemma
+python -m mao.eval_swebench --encoder local --node-encoder embeddinggemma
+```
+
+**Status — no numbers fabricated.** The full variable-dim path (model → train →
+save → reload → adjudicate) is verified end-to-end; the semantic-node artifacts
+save to `<mode>_snode-<node>/`. The EmbeddingGemma *measurements* require a
+machine with the model pulled in Ollama and were **not** run in the build
+environment (its egress policy blocks HuggingFace, the Ollama registry, and
+Kaggle, so no local weights are reachable). They are to be produced on device
+and added here. Prior results (§4, §5, §6.4) are unchanged — they are the
+validated foundation this extends.
+
+**Hypothesis under test (not yet a result):** semantic node features should
+tighten the alignment distribution on out-of-distribution graphs, lowering the
+gemini-mode ~47% deferral toward the in-distribution ~6% while holding the
+precision-1.000 witness-routing invariant and improving recall. To be confirmed
+by the local run above.
 
 ## 7. Engineering findings (failures that changed the system)
 

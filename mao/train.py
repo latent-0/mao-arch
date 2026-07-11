@@ -13,8 +13,10 @@ import time
 
 import torch
 
+from .adjudicator import artifact_subdir
 from .datagen import generate
-from .encoders.language import encoder_mode, get_language_encoder
+from .encoders.language import (encoder_mode, get_language_encoder,
+                                get_node_encoder, node_encoder_mode)
 from .joint import JointModel, triplet_loss
 
 ARTIFACT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -55,8 +57,16 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--margin", type=float, default=0.3)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--encoder", choices=["auto", "local", "gemini"], default="auto",
-                    help="language-encoder backend; artifacts are saved per mode")
+    ap.add_argument("--encoder", choices=["auto", "local", "gemini", "embeddinggemma"],
+                    default="auto",
+                    help="trace-encoder backend; artifacts are saved per mode")
+    ap.add_argument("--node-encoder", choices=["hash", "embeddinggemma", "gemini"],
+                    default="hash",
+                    help="graph node-feature encoder: 'hash' (lexical, default) or a "
+                         "semantic embedder (EmbeddingGemma local / Gemini). Semantic "
+                         "node artifacts save to <mode>_snode-<node>.")
+    ap.add_argument("--node-dim", type=int, default=None,
+                    help="node-feature dim (default 64 hash / 256 semantic)")
     ap.add_argument("--holdout", type=int, default=None,
                     help="leave-one-template-out: exclude this TEMPLATES index "
                          "from training; artifacts saved to <mode>_holdout<i>")
@@ -78,13 +88,17 @@ def main():
 
     encoder = get_language_encoder(mode=args.encoder)
     mode = encoder_mode(encoder)
-    subdir = mode if args.holdout is None else f"{mode}_holdout{args.holdout}"
+    node_encoder = get_node_encoder(mode=args.node_encoder, dim=args.node_dim)
+    node_mode = node_encoder_mode(node_encoder)
+    subdir = artifact_subdir(mode, node_mode, args.holdout)
     artifact_dir = os.path.join(ARTIFACT_ROOT, subdir)
-    print(f"[encoder] language backend: {type(encoder).__name__} (mode={mode})")
+    print(f"[encoder] trace backend: {type(encoder).__name__} (mode={mode})")
+    print(f"[encoder] node backend : {type(node_encoder).__name__} "
+          f"(mode={node_mode}, dim={node_encoder.dim})")
     tr_pos, tr_neg = _embed_traces(encoder, train)
     va_pos, va_neg = _embed_traces(encoder, val)
 
-    model = JointModel(text_dim=encoder.dim)
+    model = JointModel(text_dim=encoder.dim, node_encoder=node_encoder)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     for epoch in range(1, args.epochs + 1):
@@ -135,7 +149,9 @@ def main():
     torch.save(neg_bank, os.path.join(artifact_dir, "negative_bank.pt"))
     with open(os.path.join(artifact_dir, "calibration.json"), "w") as f:
         json.dump({**cal, "text_dim": encoder.dim, "mode": mode,
-                   "encoder": type(encoder).__name__}, f, indent=2)
+                   "encoder": type(encoder).__name__,
+                   "node_mode": node_mode, "node_dim": node_encoder.dim,
+                   "node_encoder": type(node_encoder).__name__}, f, indent=2)
     print(f"[done] artifacts saved to {artifact_dir}  ({time.time() - t0:.1f}s)")
 
 

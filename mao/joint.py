@@ -35,9 +35,10 @@ class Projector(nn.Module):
 class JointModel(nn.Module):
     """Structural encoder + graph projector + text projector into shared R^k."""
 
-    def __init__(self, text_dim: int = 512, graph_dim: int = 128, k: int = 128):
+    def __init__(self, text_dim: int = 512, graph_dim: int = 128, k: int = 128,
+                 node_encoder=None):
         super().__init__()
-        self.structural = StructuralEncoder(out_dim=graph_dim)
+        self.structural = StructuralEncoder(node_encoder=node_encoder, out_dim=graph_dim)
         self.proj_g = Projector(graph_dim, k)
         self.proj_t = Projector(text_dim, k)
         self.k = k

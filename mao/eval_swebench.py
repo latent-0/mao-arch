@@ -24,7 +24,7 @@ import random
 import statistics
 import time
 
-from .adjudicator import Adjudicator, Verdict
+from .adjudicator import Adjudicator, Verdict, artifact_subdir
 from .benchmarks import swebench
 from .datagen import _trace
 from .encoders.language import encoder_mode
@@ -41,12 +41,17 @@ def main():
     ap.add_argument("--seed", type=int, default=99)
     ap.add_argument("--no-llm", action="store_true",
                     help="skip Ollama explanations (decisions unaffected)")
-    ap.add_argument("--encoder", choices=["auto", "local", "gemini"], default="auto")
+    ap.add_argument("--encoder", choices=["auto", "local", "gemini", "embeddinggemma"],
+                    default="auto")
+    ap.add_argument("--node-encoder", choices=["hash", "embeddinggemma", "gemini"],
+                    default="hash", help="graph node-feature encoder to load")
     ap.add_argument("--artifact-mode", default=None,
-                    help="artifact subdir to load (defaults to --encoder)")
+                    help="artifact subdir to load "
+                         "(defaults to <encoder>[_snode-<node-encoder>])")
     args = ap.parse_args()
 
-    adj = Adjudicator.from_artifacts(mode=args.artifact_mode or args.encoder,
+    art_mode = args.artifact_mode or artifact_subdir(args.encoder, args.node_encoder)
+    adj = Adjudicator.from_artifacts(mode=art_mode,
                                      use_local_llm=not args.no_llm)
     print(f"[encoder] {type(adj.encoder).__name__} (mode={encoder_mode(adj.encoder)})")
 

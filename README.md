@@ -11,6 +11,9 @@ pip install -r requirements.txt
 python -m mao.train            # about 70s on CPU: datagen, contrastive training, tau calibration
 python -m mao.eval             # constraint-respecting handoff rate, naive vs joint-embedding
 python -m mao.eval_swebench    # zero-shot on 300 real SWE-bench Lite issues (no training on them)
+# fully-local semantic node features (needs `ollama pull embeddinggemma`):
+python -m mao.train --encoder local --node-encoder embeddinggemma
+python -m mao.eval_swebench --encoder local --node-encoder embeddinggemma
 python -m demo.swe_scenario    # branch-before-QA terminal demo (add --fast to skip pauses)
 python -m demo.web.server      # live split-screen web demo at http://127.0.0.1:8765
 ```
@@ -63,6 +66,8 @@ The same adjudicator — trained *only* on the 5 synthetic templates — evaluat
 
 Trained on 5 synthetic templates, the gate lifts the constraint-respecting handoff rate on 300 real, unseen issues from 49.0% to 96.3% (local) / 99.3% (gemini), and **precision stays 1.000 across every seed of both modes** — the witness-routing invariant is not a synthetic-data artifact. The offline hashing encoder's recall is only ~0.50 because it cannot transfer to real repo/file vocabulary — exactly the lexical ceiling the leave-one-template-out study above identifies. Swapping in Gemini trace embeddings (same synthetic-only training) recovers it on the real benchmark: recall 0.50 → 0.91, F1 0.667 → 0.955. That gain is not free — gemini mode escalates far more (47% vs 19% deferral), so its near-perfect handoff rate is substantially human-in-the-loop. Deferral rises with distribution shift in both modes: the system escalates rather than silently approving. What is real vs. derived in this adaptation is stated plainly in [docs/experiments.md §6](docs/experiments.md).
 
+The residual driver of that high deferral is that the GNN's *node* features are still lexical hashing even in gemini mode. Semantic node features via **EmbeddingGemma** (on-device, via Ollama) are now wired end-to-end (`--node-encoder embeddinggemma`); the on-device measurements are run where the model weights are available. See [docs/experiments.md §6.6](docs/experiments.md).
+
 ## Layout
 
 ```
@@ -77,6 +82,7 @@ mao/adjudicator.py         local gate: approve / flag-to-human / request-replan 
 mao/eval.py                constraint-respecting handoff rate + gate P/R/F1 + MAST tally
 mao/eval_swebench.py       zero-shot eval on real SWE-bench Lite task graphs
 mao/benchmarks/swebench.py SWE-bench Lite -> TaskGraph adapter (300 real issues, 12 repos)
+mao/encoders/language.py   trace + node encoders: hashing / Gemini / EmbeddingGemma (local)
 demo/swe_scenario.py       branch-before-QA demo: naive fail -> gated replan -> offline beat
 demo/web/                  live split-screen web demo (real agents, real repo, real tests)
 ```

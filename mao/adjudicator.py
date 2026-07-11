@@ -26,13 +26,22 @@ from enum import Enum
 
 import torch
 
-from .encoders.language import get_language_encoder
+from .encoders.language import get_language_encoder, get_node_encoder
 from .graph import TaskGraph, Violation
 from .handoff import HandoffPacket
 from .joint import JointModel
 
 ARTIFACT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "artifacts")
+
+
+def artifact_subdir(mode: str, node_mode: str = "hash", holdout=None) -> str:
+    """Artifact directory name for a (trace-encoder mode, node-encoder mode,
+    holdout) combination. Semantic node features get a `_snode-<mode>` suffix so
+    they never clobber the lexical-node artifacts. Kept here so train, eval, and
+    the adjudicator all agree on the layout."""
+    base = mode if holdout is None else f"{mode}_holdout{holdout}"
+    return base if node_mode in (None, "hash") else f"{base}_snode-{node_mode}"
 
 
 class Verdict(str, Enum):
@@ -122,10 +131,21 @@ class Adjudicator:
             if not os.path.isdir(os.path.join(artifact_root, mode)):
                 mode = "gemini" if mode == "local" else "local"  # fall back to what's trained
         artifact_dir = os.path.join(artifact_root, mode)
-        with open(os.path.join(artifact_dir, "calibration.json")) as f:
+        cal_path = os.path.join(artifact_dir, "calibration.json")
+        if not os.path.exists(cal_path):
+            raise FileNotFoundError(
+                f"no trained artifacts at {artifact_dir!r}. Train this configuration "
+                f"first, e.g. `python -m mao.train --encoder <mode> "
+                f"--node-encoder <node>` (EmbeddingGemma needs `ollama pull "
+                f"embeddinggemma` running locally).")
+        with open(cal_path) as f:
             cal = json.load(f)
         encoder = get_language_encoder(dim=cal["text_dim"], mode=cal["mode"])
-        model = JointModel(text_dim=cal["text_dim"])
+        # reconstruct the node-feature encoder the model was trained with
+        # (defaults to lexical hashing for artifacts saved before semantic nodes)
+        node_encoder = get_node_encoder(mode=cal.get("node_mode", "hash"),
+                                        dim=cal.get("node_dim", 64))
+        model = JointModel(text_dim=cal["text_dim"], node_encoder=node_encoder)
         model.load_state_dict(torch.load(os.path.join(artifact_dir, "joint_model.pt"),
                                          weights_only=True))
         model.eval()

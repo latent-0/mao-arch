@@ -24,29 +24,38 @@ NUM_RELATIONS = len(EdgeType) + 1  # +1 for added reverse/self handling via dist
 NODE_TYPES = list(NodeType)
 STATUSES = list(Status)
 
-_node_text_encoder = HashingTextEncoder(dim=64, seed=13)
+# Default node-feature encoder: lexical hashing (64-d), fully offline. Swap for a
+# semantic encoder (EmbeddingGemma / Gemini) via StructuralEncoder(node_encoder=...)
+# to give the graph side semantic transfer to unseen step vocabulary.
+_default_node_encoder = HashingTextEncoder(dim=64, seed=13)
 
 
-def featurize_graph(g: TaskGraph) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
+def featurize_graph(g: TaskGraph, node_encoder=None
+                    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[str]]:
     """Returns (node_features [N,F], edge_index [2,E], edge_type [E], node_ids).
 
-    Node features = hashed text embedding of description (64)
+    Node features = text embedding of description (node_encoder.dim)
                     || node-type one-hot (4) || status one-hot (4).
+    The text embedding is lexical hashing by default; pass a semantic
+    `node_encoder` (EmbeddingGemma / Gemini) to make it semantic.
     Edges are made bidirectional; the reverse direction gets its own relation id
     (rel + len(EdgeType)) so direction stays semantically meaningful.
     """
+    node_encoder = node_encoder or _default_node_encoder
+    node_dim = node_encoder.dim
     node_ids = list(g.nodes.keys())
     idx = {nid: i for i, nid in enumerate(node_ids)}
 
     feats = []
     for nid in node_ids:
         n = g.nodes[nid]
-        text = _node_text_encoder.encode(n.description or n.id)
+        text = node_encoder.encode(n.description or n.id)
         type_oh = [1.0 if n.type == t else 0.0 for t in NODE_TYPES]
         status_oh = [1.0 if n.status == s else 0.0 for s in STATUSES]
         feats.append(torch.cat([torch.tensor(text, dtype=torch.float32),
                                 torch.tensor(type_oh + status_oh)]))
-    x = torch.stack(feats) if feats else torch.zeros((0, 64 + len(NODE_TYPES) + len(STATUSES)))
+    x = torch.stack(feats) if feats else \
+        torch.zeros((0, node_dim + len(NODE_TYPES) + len(STATUSES)))
 
     rel_ids = {r: i for i, r in enumerate(EdgeType)}
     srcs, dsts, rels = [], [], []
@@ -121,18 +130,24 @@ class AttentionPooling(nn.Module):
 
 
 class StructuralEncoder(nn.Module):
-    """TaskGraph -> g in R^d via 2 r-GAT layers + frontier attention pooling."""
+    """TaskGraph -> g in R^d via 2 r-GAT layers + frontier attention pooling.
 
-    def __init__(self, feat_dim: int = 64 + len(NODE_TYPES) + len(STATUSES),
-                 hidden: int = 128, out_dim: int = 128):
+    `node_encoder` featurizes node descriptions (lexical hashing by default; a
+    semantic EmbeddingGemma/Gemini encoder gives the graph side transfer to
+    unseen step vocabulary). Its dim sets the r-GAT input width.
+    """
+
+    def __init__(self, node_encoder=None, hidden: int = 128, out_dim: int = 128):
         super().__init__()
+        self.node_encoder = node_encoder or _default_node_encoder
+        feat_dim = self.node_encoder.dim + len(NODE_TYPES) + len(STATUSES)
         self.l1 = RGATLayer(feat_dim, hidden)
         self.l2 = RGATLayer(hidden, out_dim)
         self.pool = AttentionPooling(out_dim)
         self.out_dim = out_dim
 
     def forward(self, g: TaskGraph) -> torch.Tensor:
-        x, edge_index, edge_type, node_ids = featurize_graph(g)
+        x, edge_index, edge_type, node_ids = featurize_graph(g, self.node_encoder)
         h = self.l1(x, edge_index, edge_type)
         h = self.l2(h, edge_index, edge_type)
         # pool over live subtasks (the active frontier), not full history
