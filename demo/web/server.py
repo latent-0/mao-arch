@@ -53,6 +53,7 @@ class Handler(BaseHTTPRequestHandler):
     def _stream(self, qs: dict):
         side = qs.get("side", ["naive"])[0]
         offline = qs.get("offline", ["0"])[0] == "1"
+        scenario = qs.get("scenario", ["swe"])[0]
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -70,9 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if side == "structured":
-                run_structured(emit, offline)
+                run_structured(emit, offline, scenario)
             else:
-                run_naive(emit)
+                run_naive(emit, scenario)
         except ClientGone:
             pass
 
